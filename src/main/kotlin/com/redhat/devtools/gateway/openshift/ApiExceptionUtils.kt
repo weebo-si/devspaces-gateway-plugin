@@ -78,6 +78,16 @@ fun ApiException.toWorkspaceException(
 }
 
 /**
+ * Explains why the DevWorkspaces of [namespace] could not be listed, or returns null for other errors.
+ */
+fun ApiException.toNamespaceMessage(namespace: String): String? = when {
+    isForbidden() -> "You have no access to DevWorkspaces in namespace “$namespace”."
+    isNotFound() -> "No DevWorkspaces found in namespace “$namespace”. " +
+            "Check the namespace and that the DevWorkspace Operator is installed."
+    else -> null
+}
+
+/**
  * Converts HTTP status code to human-readable message.
  */
 private fun statusCodeReasonPhrase(code: Int): String = when (code) {
