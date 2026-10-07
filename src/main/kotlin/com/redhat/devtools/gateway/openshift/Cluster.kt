@@ -26,6 +26,10 @@ data class Cluster(
     /** From kubeconfig user entry when present (basic auth). */
     val basicUsername: String? = null,
     val basicPassword: String? = null,
+    /** Namespace of the kubeconfig context of this cluster. */
+    val namespace: String? = null,
+    /** `exec` credential plugin of the kubeconfig user (e.g. `kubectl oidc-login`). */
+    val exec: Map<*, *>? = null,
 ) {
     init {
         require(!(token != null && clientCert != null)) {

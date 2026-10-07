@@ -244,7 +244,9 @@ data class KubeConfigUser(
     val clientCertificate: CertificateSource? = null,
     val clientKey: CertificateSource? = null,
     val username: String? = null,
-    val password: String? = null
+    val password: String? = null,
+    /** `exec` credential plugin (e.g. `kubectl oidc-login`), run by [KubeConfigUtils.getExecToken]. */
+    val exec: Map<*, *>? = null
 ) {
     companion object {
         fun fromMap(map: Map<*, *>): KubeConfigUser {
@@ -269,7 +271,8 @@ data class KubeConfigUser(
                 clientCertificate = certSource,
                 clientKey = keySource,
                 username = map["username"] as? String,
-                password = map["password"] as? String
+                password = map["password"] as? String,
+                exec = map["exec"] as? Map<*, *>
             )
         }
 

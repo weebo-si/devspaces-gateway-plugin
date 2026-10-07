@@ -24,4 +24,6 @@ class DevSpacesState : BaseState() {
     var server by string()
     var token by string()
     var authTabIndex by property(0)
+    /** Namespace entered for each server URL */
+    var namespaces by map<String, String>()
 }
