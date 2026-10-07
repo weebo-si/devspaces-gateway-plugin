@@ -178,6 +178,11 @@ kover {
 }
 
 tasks {
+    // EPL-2.0 §3: the license ships with the distributed plugin
+    jar {
+        from("LICENSE") { into("META-INF") }
+    }
+
     wrapper {
         gradleVersion = providers.gradleProperty("gradleVersion").get()
     }
