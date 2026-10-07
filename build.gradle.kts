@@ -1,3 +1,5 @@
+import com.github.jk1.license.filter.LicenseBundleNormalizer
+import com.github.jk1.license.render.TextReportRenderer
 import org.jetbrains.changelog.Changelog
 import org.jetbrains.changelog.markdownToHTML
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
@@ -14,6 +16,7 @@ plugins {
     alias(libs.plugins.qodana) // Gradle Qodana Plugin
     alias(libs.plugins.kover) // Gradle Kover Plugin
     kotlin("plugin.serialization") version libs.versions.kotlin.get() // Serialization needed for RedHat Auth
+    id("com.github.jk1.dependency-license-report") version "3.1.4" // Third-party notices shipped in the plugin
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -94,6 +97,13 @@ dependencies {
 
     // JSON serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:${libs.versions.kotlinxSerialization.get()}")
+}
+
+// Third-party notices of the libraries bundled in the plugin (runtimeClasspath = the plugin's lib/ folder)
+licenseReport {
+    configurations = arrayOf("runtimeClasspath")
+    filters = arrayOf(LicenseBundleNormalizer())
+    renderers = arrayOf(TextReportRenderer("THIRD-PARTY-NOTICES.txt"))
 }
 
 // Configure IntelliJ Platform Gradle Plugin - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-extension.html
@@ -178,9 +188,15 @@ kover {
 }
 
 tasks {
-    // EPL-2.0 §3: the license ships with the distributed plugin
+    // EPL-2.0 §3: the license ships with the distributed plugin, with the notices of the bundled libraries
     jar {
         from("LICENSE") { into("META-INF") }
+        from(generateLicenseReport) { into("META-INF/third-party") }
+        from("THIRD-PARTY-LICENSES.md") { into("META-INF/third-party") }
+    }
+
+    generateLicenseReport {
+        notCompatibleWithConfigurationCache("dependency-license-report does not support the configuration cache")
     }
 
     wrapper {
