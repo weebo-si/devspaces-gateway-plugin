@@ -14,9 +14,11 @@ package com.redhat.devtools.gateway.kubeconfig
 import com.redhat.devtools.gateway.openshift.Cluster
 import io.kubernetes.client.util.KubeConfig
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.io.IOException
 import java.nio.file.Path
 import kotlin.io.path.createDirectories
 import kotlin.io.path.createFile
@@ -1678,6 +1680,106 @@ class KubeConfigUtilsTest {
     private fun createKubeConfig(yaml: String): KubeConfig {
         return KubeConfig.loadKubeConfig(java.io.StringReader(yaml))
     }
+
+    @Test
+    fun `#getClusters reads the context namespace and the user exec plugin`() {
+        // given
+        val kubeConfigFile = createTempKubeConfigFile(
+            "config", """
+            apiVersion: v1
+            clusters:
+            - cluster:
+                server: https://api.hoth.starwars.com:6443
+              name: hoth-cluster
+            contexts:
+            - context:
+                cluster: hoth-cluster
+                user: han-solo
+                namespace: dev-ws-han
+              name: hoth-cluster
+            current-context: hoth-cluster
+            kind: Config
+            users:
+            - name: han-solo
+              user:
+                exec:
+                  apiVersion: client.authentication.k8s.io/v1beta1
+                  command: kubectl
+                  args: [oidc-login, get-token]
+        """.trimIndent()
+        )
+
+        // when
+        val cluster = KubeConfigUtils.getClusters(listOf(kubeConfigFile)).single()
+
+        // then
+        assertThat(cluster.namespace).isEqualTo("dev-ws-han")
+        assertThat(cluster.exec?.get("command")).isEqualTo("kubectl")
+        assertThat(cluster.token).isNull()
+    }
+
+    @Test
+    fun `#getExecToken returns the token printed by the exec plugin and passes its stderr`() {
+        // given
+        val credential = """{"apiVersion":"client.authentication.k8s.io/v1","kind":"ExecCredential","status":{"token":"exec-token"}}"""
+        val exec = execEntry("echo 'Please visit http://localhost:8000' >&2; echo '$credential'")
+        val stderr = mutableListOf<String>()
+
+        // when
+        val token = KubeConfigUtils.getExecToken(exec) { stderr.add(it) }
+
+        // then
+        assertThat(token).isEqualTo("exec-token")
+        assertThat(stderr).containsExactly("Please visit http://localhost:8000")
+    }
+
+    @Test
+    fun `#getExecToken throws with the stderr of the exec plugin when it fails`() {
+        // given
+        val exec = execEntry("echo 'error: login failed' >&2; exit 3")
+
+        // when, then
+        assertThatThrownBy { KubeConfigUtils.getExecToken(exec) }
+            .isInstanceOf(IOException::class.java)
+            .hasMessageContaining("code 3")
+            .hasMessageContaining("error: login failed")
+    }
+
+    @Test
+    fun `#getExecToken throws when the command is not in the PATH`() {
+        assertThatThrownBy { KubeConfigUtils.getExecToken(mapOf("command" to "no-such-kubectl-plugin")) }
+            .isInstanceOf(IOException::class.java)
+            .hasMessageContaining("not found in PATH")
+    }
+
+    @Test
+    fun `#getExecToken stops waiting for the exec plugin when the thread is interrupted`() {
+        // given
+        var error: Throwable? = null
+        val worker = Thread {
+            try {
+                KubeConfigUtils.getExecToken(execEntry("sleep 30"))
+            } catch (e: Throwable) {
+                error = e
+            }
+        }
+        worker.start()
+        Thread.sleep(500)
+
+        // when
+        worker.interrupt()
+        worker.join(5000)
+
+        // then
+        assertThat(worker.isAlive).isFalse()
+        assertThat(error).isInstanceOf(InterruptedException::class.java)
+    }
+
+    private fun execEntry(script: String) = mapOf(
+        "apiVersion" to "client.authentication.k8s.io/v1",
+        "command" to "sh",
+        "args" to listOf("-c", script)
+    )
 
     private fun createTempKubeConfigFile(name: String, content: String): Path {
         return tempDir.resolve(name).apply {

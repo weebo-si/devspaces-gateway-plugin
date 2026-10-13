@@ -19,6 +19,8 @@ import io.kubernetes.client.openapi.ApiClient
 class DevSpacesContext {
     lateinit var client: ApiClient
     var cluster: Cluster? = null
+    /** Namespace entered by the user. When null, the workspaces of all OpenShift projects are listed. */
+    var selectedNamespace: String? = null
     lateinit var devWorkspace: DevWorkspace
     var activeWorkspaces = mutableSetOf<DevWorkspace>()
 

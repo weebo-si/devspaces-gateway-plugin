@@ -109,6 +109,12 @@ class DevSpacesServerStepView(
             PasteClipboardMenu.addTo(this)
         }
 
+    private val tfNamespace = JBTextField()
+        .apply {
+            PasteClipboardMenu.addTo(this)
+            addKeyListener(createEnterKeyListener())
+        }
+
     private var tfServer =
         FilteringComboBox.create(
             { it?.toString() ?: "" },
@@ -200,6 +206,11 @@ class DevSpacesServerStepView(
     val bodyPanel = panel {
         row(DevSpacesBundle.message("connector.wizard_step.openshift_connection.label.server")) {
             cell(tfServer).align(Align.FILL)
+        }
+        row(DevSpacesBundle.message("connector.wizard_step.openshift_connection.label.namespace")) {
+            cell(tfNamespace)
+                .align(Align.FILL)
+                .comment(DevSpacesBundle.message("connector.wizard_step.openshift_connection.comment.namespace"))
         }
         collapsibleGroup(
             DevSpacesBundle.message("connector.wizard_step.openshift_connection.label.advanced_group")
@@ -309,6 +320,7 @@ class DevSpacesServerStepView(
                         tfClientKey.text = selectedCluster.clientKey?.value ?: ""
                     }
                     findStrategy<OpenShiftCredentialsAuthenticationStrategy>()?.applyFromCluster(selectedCluster)
+                    tfNamespace.text = settings.loadNamespace(selectedCluster)
                     saveConfigCheckbox.isSelected = false
                 }
             }
@@ -441,6 +453,7 @@ class DevSpacesServerStepView(
 
         saveConfigForConnect = saveConfig
         val certAuthorityData = tfCertAuthority.text.ifBlank { null }
+        val namespace = tfNamespace.text.trim().ifEmpty { null }
 
         return WizardAsyncWork(
             progressTitle = DevSpacesBundle.message("connector.wizard_step.openshift_connection.title"),
@@ -477,7 +490,9 @@ class DevSpacesServerStepView(
                     )
                 }
 
+                devSpacesContext.selectedNamespace = namespace
                 settings.save(selectedCluster)
+                settings.saveNamespace(selectedCluster, namespace)
                 onFinished(true)
             } catch (e: ProcessCanceledException) {
                 startTokenMonitor()
@@ -662,6 +677,7 @@ class DevSpacesServerStepView(
             tfClientKey.text = toSelect?.clientKey?.value ?: ""
         }
         findStrategy<OpenShiftCredentialsAuthenticationStrategy>()?.applyFromCluster(toSelect)
+        tfNamespace.text = toSelect?.let { settings.loadNamespace(it) } ?: ""
     }
 
     private fun setSelectedAuthTab() {
@@ -711,6 +727,18 @@ class DevSpacesServerStepView(
         fun save(toSave: Cluster?) {
             val cluster = toSave ?: return
             service.state.server = cluster.url
+        }
+
+        /** The namespace last entered for [cluster], otherwise the one of its kubeconfig context */
+        fun loadNamespace(cluster: Cluster): String {
+            return service.state.namespaces[cluster.url] ?: cluster.namespace ?: ""
+        }
+
+        fun saveNamespace(cluster: Cluster, namespace: String?) {
+            // Replaced, not mutated in place, so that the change is persisted
+            service.state.namespaces = service.state.namespaces.toMutableMap().apply {
+                if (namespace == null) remove(cluster.url) else put(cluster.url, namespace)
+            }
         }
 
         fun loadAuthTab(): Int {

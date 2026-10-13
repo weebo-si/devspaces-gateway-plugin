@@ -12,14 +12,19 @@
 package com.redhat.devtools.gateway.kubeconfig
 
 import com.intellij.openapi.diagnostic.thisLogger
+import com.google.gson.JsonParser
 import com.intellij.util.EnvironmentUtil
 import com.redhat.devtools.gateway.openshift.Cluster
 import com.redhat.devtools.gateway.util.toServerBaseUrl
 import io.kubernetes.client.util.KubeConfig
 import java.io.File
+import java.io.IOException
 import java.net.URI
 import java.nio.file.Path
 import java.util.Locale.getDefault
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentLinkedDeque
+import kotlin.concurrent.thread
 import kotlin.io.path.Path
 import kotlin.io.path.exists
 import kotlin.io.path.isRegularFile
@@ -59,7 +64,8 @@ object KubeConfigUtils {
                 kubeConfig.clusters?.mapNotNull { cluster ->
                     val namedCluster = KubeConfigNamedCluster.fromMap(cluster as Map<*, *>) ?: return@mapNotNull null
                     val kubeUser = KubeConfigNamedUser.getUserForCluster(namedCluster.name, kubeConfig)
-                    val clusterModel = toCluster(namedCluster, kubeUser)
+                    val namespace = KubeConfigNamedContext.getByName(namedCluster.name, kubeConfig)?.context?.namespace
+                    val clusterModel = toCluster(namedCluster, kubeUser, namespace)
                     logger.debug("Parsed cluster: ${clusterModel.name} at ${clusterModel.url}")
                     clusterModel
                 } ?: emptyList()
@@ -99,7 +105,8 @@ object KubeConfigUtils {
 
     private fun toCluster(
         clusterEntry: KubeConfigNamedCluster,
-        kubeUser: KubeConfigUser?
+        kubeUser: KubeConfigUser?,
+        namespace: String?
     ): Cluster {
         return Cluster(
             url = clusterEntry.cluster.server,
@@ -110,8 +117,71 @@ object KubeConfigUtils {
             clientKey = kubeUser?.clientKey,
             basicUsername = kubeUser?.username,
             basicPassword = kubeUser?.password,
+            namespace = namespace,
+            exec = kubeUser?.exec,
         )
     }
+
+    /**
+     * Runs the kubeconfig `exec` credential plugin (e.g. `kubectl oidc-login get-token`) and returns its token.
+     *
+     * Not run through [KubeConfig.getCredentials], which uses the PATH of the JVM (no Homebrew dirs on macOS when
+     * Gateway starts from the Dock), hides the plugin's stderr (where `oidc-login` prints the login URL when it
+     * cannot open a browser) and cannot be cancelled.
+     *
+     * The plugin may wait for a browser login, so call it off the EDT. Interrupting the calling thread kills it.
+     *
+     * @param onStderrLine receives each stderr line of the plugin
+     * @throws IOException if the plugin cannot be started, fails or prints no token
+     */
+    @Throws(IOException::class, InterruptedException::class)
+    fun getExecToken(exec: Map<*, *>, onStderrLine: (String) -> Unit = {}): String {
+        val command = exec["command"] as? String ?: throw IOException("The kubeconfig exec entry has no command")
+        val args = (exec["args"] as? List<*>).orEmpty().map { it.toString() }
+        val env = EnvironmentUtil.getEnvironmentMap().toMutableMap()
+        (exec["env"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.forEach { env[it["name"].toString()] = it["value"].toString() }
+        val executable = if (command.contains('/') || command.contains('\\')) {
+            command
+        } else {
+            findInPath(command, env["PATH"]) ?: throw IOException("$command not found in PATH ${env["PATH"]}")
+        }
+
+        val process = ProcessBuilder(listOf(executable) + args)
+            .apply { environment().putAll(env) }
+            .start()
+        try {
+            process.outputStream.close()
+            val stderr = ConcurrentLinkedDeque<String>()
+            val stderrReader = thread(isDaemon = true, name = "kubeconfig exec stderr") {
+                process.errorStream.bufferedReader().forEachLine { line ->
+                    logger.info("$command: $line")
+                    stderr.add(line)
+                    if (stderr.size > 20) stderr.removeFirst()
+                    onStderrLine(line)
+                }
+            }
+            val stdout = CompletableFuture.supplyAsync { process.inputStream.readAllBytes().decodeToString() }
+
+            val exitCode = process.waitFor()
+            stderrReader.join(1000)
+            if (exitCode != 0) {
+                throw IOException("$command exited with code $exitCode: ${stderr.joinToString("\n")}")
+            }
+            return JsonParser.parseString(stdout.get()).asJsonObject
+                .getAsJsonObject("status")?.get("token")?.asString
+                ?: throw IOException("$command printed no token")
+        } finally {
+            // Children too: a child left alive (e.g. spawned by `sh -c`) keeps the pipes, and the readers, open
+            process.descendants().forEach { it.destroy() }
+            process.destroy()
+        }
+    }
+
+    private fun findInPath(command: String, path: String?): String? =
+        path?.split(File.pathSeparator)
+            ?.flatMap { dir -> listOf(File(dir, command), File(dir, "$command.exe")) }
+            ?.firstOrNull { it.isFile && it.canExecute() }
+            ?.path
 
     private fun getEnvConfigs(kubeconfigEnv: String? = null): List<Path> {
         val env = kubeconfigEnv

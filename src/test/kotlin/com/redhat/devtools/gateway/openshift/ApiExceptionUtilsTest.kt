@@ -136,6 +136,13 @@ class ApiExceptionUtilsTest {
     assertThat(mapped).isInstanceOf(WorkspaceAccessDeniedException::class.java)
   }
 
+  @Test
+  fun `toNamespaceMessage explains forbidden and not found, and ignores other errors`() {
+    assertThat(apiException(403, "").toNamespaceMessage(namespace)).contains("no access", namespace)
+    assertThat(apiException(404, "").toNamespaceMessage(namespace)).contains("No DevWorkspaces found", namespace)
+    assertThat(apiException(500, "").toNamespaceMessage(namespace)).isNull()
+  }
+
   private fun apiException(code: Int, body: String): ApiException =
     ApiException(code, "error", emptyMap(), body)
 
