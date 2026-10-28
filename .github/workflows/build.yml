@@ -23,13 +23,17 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-  
+
+permissions: {}
+
 jobs:
 
   # Prepare environment and build the plugin
   build:
     name: Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.properties.outputs.version }}
       changelog: ${{ steps.properties.outputs.changelog }}
@@ -94,6 +98,9 @@ jobs:
     name: Test
     needs: [ build ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
 
       # Check out the current repository
@@ -129,6 +136,8 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           files: ${{ github.workspace }}/build/reports/kover/report.xml
+          flags: unit-tests
+          use_oidc: true
 
   # Run Qodana inspections and provide report
   inspectCode:
@@ -173,6 +182,8 @@ jobs:
     name: Verify plugin
     needs: [ build ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
 
       # Free GitHub Actions Environment Disk Space
