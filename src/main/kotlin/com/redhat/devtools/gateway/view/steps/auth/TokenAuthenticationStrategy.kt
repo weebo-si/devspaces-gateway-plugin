@@ -29,10 +29,16 @@ import com.redhat.devtools.gateway.view.ui.PasteClipboardMenu
 import com.redhat.devtools.gateway.view.ui.PasswordFieldWithToggle
 import com.redhat.devtools.gateway.DevSpacesContext
 import com.redhat.devtools.gateway.auth.tls.TlsContext
+import com.redhat.devtools.gateway.kubeconfig.KubeConfigUtils
 import com.redhat.devtools.gateway.openshift.Cluster
 import com.redhat.devtools.gateway.util.ClipboardTokenMonitor
+import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 
 /**
  * Authentication strategy for token-based authentication.
@@ -89,9 +95,16 @@ class TokenAuthenticationStrategy(
         devSpacesContext: DevSpacesContext,
         indicator: ProgressIndicator
     ) {
-        indicator.text = "Validating token..."
+        val typedToken = String(tfToken.password)
+        val exec = selectedCluster.exec.takeIf { typedToken.isEmpty() }
+        val token = if (exec != null) {
+            indicator.text = "Getting a token from ${exec["command"]} (kubeconfig exec plugin)..."
+            getExecToken(exec, indicator)
+        } else {
+            typedToken
+        }
 
-        val token = String(tfToken.password)
+        indicator.text = "Validating token..."
 
         val client = createValidatedApiClient(
             server,
@@ -100,13 +113,43 @@ class TokenAuthenticationStrategy(
             errorMessage = "Authentication failed: invalid server URL or token."
         )
 
-        saveKubeconfig.invoke(selectedCluster, token, indicator)
+        // A token from the exec plugin expires: saving it next to the exec entry would break other tools
+        if (exec == null) {
+            saveKubeconfig.invoke(selectedCluster, token, indicator)
+        }
         devSpacesContext.client = client
     }
 
+    /**
+     * Shows the login URL that the plugin prints (e.g. `kubectl oidc-login` when it cannot open a browser).
+     */
+    private suspend fun getExecToken(exec: Map<*, *>, indicator: ProgressIndicator): String = withContext(Dispatchers.IO) {
+        try {
+            runInterruptible {
+                KubeConfigUtils.getExecToken(exec) { line ->
+                    URL_PATTERN.find(line)?.let { indicator.text2 = "Log in at ${it.value}" }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw AuthenticationException("The kubeconfig exec plugin failed: ${e.message}", e)
+        } finally {
+            indicator.text2 = null
+        }
+    }
+
+    private companion object {
+        val URL_PATTERN = Regex("https?://\\S+")
+    }
+
+    /** Without a token, the kubeconfig exec plugin of the selected cluster (e.g. `kubectl oidc-login`) provides one */
     override fun isNextEnabled(): Boolean =
         isServerSelected()
-                && tfToken.password?.isNotEmpty() == true
+                && (tfToken.password?.isNotEmpty() == true || selectedClusterHasExec())
+
+    private fun selectedClusterHasExec(): Boolean =
+        ((tfServer as? JComboBox<*>)?.editor?.item as? Cluster)?.exec != null
 
     /**
      * Dirty vs kubeconfig only once the token field has content; an empty field after switching tabs is not dirty.
