@@ -1,8 +1,9 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-    <id>com.redhat.devtools.gateway</id>
-    <name>OpenShift Dev Spaces</name>
-    <vendor email="developers@redhat.com" url="https://www.redhat.com">Red-Hat</vendor>
+    <!-- weebo-si build: own ID, name and vendor, so it is not taken for the Red Hat plugin -->
+    <id>io.github.weebo-si.gateway</id>
+    <name>Weebo Gateway</name>
+    <vendor url="https://github.com/weebo-si">weebo-si</vendor>
 
     <depends>com.intellij.modules.platform</depends>
     <depends optional="true">com.jetbrains.gateway</depends>
