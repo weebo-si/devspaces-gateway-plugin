@@ -29,6 +29,8 @@ import com.redhat.devtools.gateway.ThinClientConnectException
 import com.redhat.devtools.gateway.devworkspace.*
 import com.redhat.devtools.gateway.openshift.Projects
 import com.redhat.devtools.gateway.openshift.Utils
+import com.redhat.devtools.gateway.openshift.isNotFound
+import com.redhat.devtools.gateway.openshift.toNamespaceMessage
 import com.redhat.devtools.gateway.server.RemoteIDEServer
 import com.redhat.devtools.gateway.server.RemoteIDEServerStatus
 import com.redhat.devtools.gateway.util.ProgressCountdown
@@ -42,6 +44,7 @@ import com.redhat.devtools.gateway.view.ui.Dialogs
 import com.redhat.devtools.gateway.view.ui.Dialogs.confirmUnknownEditor
 import com.redhat.devtools.gateway.view.ui.ProgressDialogParent
 import com.redhat.devtools.gateway.view.ui.onDoubleClick
+import io.kubernetes.client.openapi.ApiException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import java.awt.Dimension
@@ -206,14 +209,13 @@ class DevSpacesWorkspacesStepView(
 
     private fun refreshAllDevWorkspaces(): Map<String, String?> {
         val state = DevWorkspaceRefreshState()
-        val projects = Projects(devSpacesContext.client).list()
-        val devWorkspaces = projects
-            .map { Utils.getValue(it, arrayOf("metadata", "name")) as String }
+        val namespaces = listNamespaces()
+        val devWorkspaces = namespaces
             .flatMap { fetchDevWorkspacesForNamespace(it, state) }
 
         thisLogger().info(
             "Starting DevWorkspace watches: ${state.lastResourceVersions.size} namespaces" +
-                    " of ${projects.size} projects listed (${state.workspaceCount} workspaces)"
+                    " of ${namespaces.size} namespaces listed (${state.workspaceCount} workspaces)"
         )
 
         invokeLater(ModalityState.any()) {
@@ -229,6 +231,22 @@ class DevSpacesWorkspacesStepView(
         return state.lastResourceVersions
     }
 
+    /**
+     * The namespace entered by the user, or all the OpenShift projects when none was entered.
+     */
+    private fun listNamespaces(): List<String> {
+        devSpacesContext.selectedNamespace?.let { return listOf(it) }
+        return try {
+            Projects(devSpacesContext.client).list()
+                .map { Utils.getValue(it, arrayOf("metadata", "name")) as String }
+        } catch (e: ApiException) {
+            if (!e.isNotFound()) throw e
+            throw IllegalStateException(
+                "This cluster is not OpenShift. Go back and enter the namespace of your workspaces.", e
+            )
+        }
+    }
+
     private class DevWorkspaceRefreshState {
         val lastResourceVersions = mutableMapOf<String, String?>()
         val templateMaps = mutableMapOf<String, Map<String, List<DevWorkspaceTemplate>>>()
@@ -240,7 +258,11 @@ class DevSpacesWorkspacesStepView(
         namespace: String,
         state: DevWorkspaceRefreshState
     ): List<DevWorkspaceListItem> {
-        val dwListResult = DevWorkspaces(devSpacesContext.client).listWithResult(namespace)
+        val dwListResult = try {
+            DevWorkspaces(devSpacesContext.client).listWithResult(namespace)
+        } catch (e: ApiException) {
+            throw IllegalStateException(e.toNamespaceMessage(namespace) ?: throw e, e)
+        }
         state.templateMaps[namespace] = dwListResult.templates
         if (dwListResult.templatesUnavailable) {
             state.namespacesUnavailable.add(namespace)
@@ -249,10 +271,10 @@ class DevSpacesWorkspacesStepView(
         /*
          * Known gap:
          * New workspaces in previously empty namespaces are not shown.
-         * We're not watching empty namespaces for now.
+         * We're not watching empty namespaces for now, except the namespace entered by the user.
          * Only manual refresh makes them show up in the list of workspaces
          */
-        if (dwListResult.items.isNotEmpty()
+        if ((dwListResult.items.isNotEmpty() || namespace == devSpacesContext.selectedNamespace)
             && resourceVersion != null) {
             state.lastResourceVersions[namespace] = resourceVersion
         }
