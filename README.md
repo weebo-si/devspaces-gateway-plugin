@@ -6,7 +6,9 @@
 
 <!-- Plugin description -->
 <!-- This specific section is a source for the [plugin.xml](/src/main/resources/META-INF/plugin.xml) file which will be extracted by the [Gradle](/build.gradle.kts) during the build process. -->
-Plugin for JetBrains Gateway enables local desktop development experience with the IntelliJ IDEs connected to OpenShift Dev Spaces.
+Plugin for JetBrains Gateway enables local desktop development experience with the IntelliJ IDEs connected to Eclipse Che workspaces, on Kubernetes or OpenShift.
+
+Unofficial weebo-si build, based on the [OpenShift Dev Spaces Gateway plugin](https://github.com/redhat-developer/devspaces-gateway-plugin) by Red Hat (EPL-2.0). Not endorsed by Red Hat or the Eclipse Foundation. Source: [weebo-si/devspaces-gateway-plugin](https://github.com/weebo-si/devspaces-gateway-plugin).
 <!-- Plugin description end -->
 
 ![image](https://github.com/user-attachments/assets/0fd641e6-880a-44af-8f64-581d81f03276)
